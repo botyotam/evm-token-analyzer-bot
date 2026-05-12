@@ -3,6 +3,8 @@ import re
 import logging
 import asyncio
 import aiohttp
+import sqlite3
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CallbackQueryHandler, CommandHandler, filters
 from dotenv import load_dotenv
@@ -18,6 +20,38 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+# Database Setup
+DB_PATH = "bot_data.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS first_calls
+                 (ca TEXT PRIMARY KEY, username TEXT, price REAL, timestamp DATETIME)''')
+    conn.commit()
+    conn.close()
+
+def get_first_call(ca):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT username, price, timestamp FROM first_calls WHERE ca=?", (ca.lower(),))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def save_first_call(ca, username, price):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO first_calls (ca, username, price, timestamp) VALUES (?, ?, ?, ?)",
+                  (ca.lower(), username, price, datetime.now()))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass # Already exists
+    conn.close()
+
+init_db()
 
 # Regex for EVM Address
 EVM_ADDRESS_REGEX = r"0x[a-fA-F0-9]{40}"
@@ -211,7 +245,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
-async def get_token_info_text(chain_id, ca):
+async def get_token_info_text(chain_id, ca, username=None):
     sec_data = await get_token_security(chain_id, ca)
     if not sec_data or not sec_data.get("token_name"):
         return None, None, None
@@ -223,18 +257,52 @@ async def get_token_info_text(chain_id, ca):
     funder, fund_amt = await get_funding_info(chain_id, creator) if creator != "N/A" else ("N/A", 0)
     
     name, symbol = sec_data.get("token_name", "Unknown"), sec_data.get("token_symbol", "")
-    price = token_data.get("priceUsd", "0") if token_data else "0"
+    current_price = float(token_data.get("priceUsd", "0")) if token_data else 0
     mc = token_data.get("fdv", 0) if token_data else 0
     liq = token_data.get("liquidity", {}).get("usd", 0) if token_data else 0
     
+    # Socials & Website
+    socials_text = ""
+    if token_data and token_data.get("info"):
+        info = token_data["info"]
+        links = []
+        if info.get("websites"):
+            links.append(f"[Website]({info['websites'][0]['url']})")
+        if info.get("socials"):
+            for s in info["socials"]:
+                links.append(f"[{s['type'].capitalize()}]({s['url']})")
+        if links:
+            socials_text = "🌐 **Links**: " + " | ".join(links) + "\n\n"
+
+    # First Call & PnL Logic
+    first_call = get_first_call(ca)
+    if not first_call and username and current_price > 0:
+        save_first_call(ca, username, current_price)
+        first_call = (username, current_price, datetime.now())
+    
+    pnl_info = ""
+    if first_call:
+        fc_user, fc_price, _ = first_call
+        if fc_price > 0:
+            multiplier = current_price / fc_price
+            pnl_percent = (multiplier - 1) * 100
+            pnl_emoji = "🟢" if pnl_percent >= 0 else "🔴"
+            pnl_info = (
+                f"📣 **First Call by**: @{fc_user}\n"
+                f"├ Entry Price: `${fc_price:.8f}`\n"
+                f"└ Performance: {pnl_emoji} **{pnl_percent:.1f}% ({multiplier:.2f}x)**\n\n"
+            )
+
     response_text = (
         f"💎 **{name} ({symbol})** | {chain_name}\n"
         f"`{ca}`\n\n"
         f"💰 **Market Info**\n"
-        f"• Price: ${price}\n"
-        f"• Market Cap: ${mc:,.0f}\n"
-        f"• Liquidity: ${liq:,.0f}\n\n"
-        + format_security_info(sec_data) +
+        f"• Price: `${current_price:.8f}`\n"
+        f"• Market Cap: `${mc:,.0f}`\n"
+        f"• Liquidity: `${liq:,.0f}`\n\n"
+        + pnl_info +
+        socials_text +
+        format_security_info(sec_data) +
         f"\n👨‍💻 **Creator Info**\n"
         f"• Address: `{creator}`\n"
         f"• **Funding Source**: `{funder}`\n"
@@ -258,11 +326,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not match: return
 
     ca = match.group(0).lower()
+    username = update.message.from_user.username or update.message.from_user.first_name
     status_msg = await update.message.reply_text(f"🔍 Menganalisis token: `{ca}`...", parse_mode="Markdown")
 
     chains = ["1", "8453"]
     for cid in chains:
-        response_text, reply_markup, success = await get_token_info_text(cid, ca)
+        response_text, reply_markup, success = await get_token_info_text(cid, ca, username)
         if success:
             await status_msg.edit_text(response_text, reply_markup=reply_markup, parse_mode="Markdown", disable_web_page_preview=True)
             return
@@ -281,7 +350,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     page = int(data[3]) if len(data) > 3 else 0
 
     if action == "mainrefresh":
-        response_text, reply_markup, success = await get_token_info_text(chain, ca)
+        username = query.from_user.username or query.from_user.first_name
+        response_text, reply_markup, success = await get_token_info_text(chain, ca, username)
         if success:
             await query.edit_message_text(response_text, reply_markup=reply_markup, parse_mode="Markdown", disable_web_page_preview=True)
         return
@@ -326,7 +396,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif action == "back":
-        response_text, reply_markup, success = await get_token_info_text(chain, ca)
+        username = query.from_user.username or query.from_user.first_name
+        response_text, reply_markup, success = await get_token_info_text(chain, ca, username)
         if success:
             await query.edit_message_text(response_text, reply_markup=reply_markup, parse_mode="Markdown", disable_web_page_preview=True)
 
