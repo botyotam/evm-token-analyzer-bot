@@ -345,24 +345,48 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif action == "smart" or action == "smartrefresh":
-        await query.edit_message_text(f"⏳ Menganalisis Smart Trading untuk `{ca}`...", parse_mode="Markdown")
-        smart_data = await get_smart_trading_analysis(chain, ca)
-        if smart_data:
-            res = "🧠 **Smart Trading Analysis**\n\n"
-            for s in smart_data[:5]: # Show top 5
-                pnl_str = f"🟢 +{s['pnl']:.1f}%" if s['pnl'] > 0 else f"🔴 {s['pnl']:.1f}%"
-                res += (
-                    f"👤 `{s['address'][:10]}...`\n"
-                    f"  ├ Type: **{s['type']}**\n"
-                    f"  └ Est. PnL: **{pnl_str}**\n\n"
-                )
-        else:
-            res = "ℹ️ **No Smart Trading Data**\nTidak dapat menganalisis data trading untuk token ini."
+        loading_text = "⏳ Menganalisis Smart Trading..." if action == "smart" else "🔄 Merefresh data..."
+        await query.edit_message_text(f"{loading_text} untuk `{ca}`...", parse_mode="Markdown")
         
-        keyboard = [
-            [InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_0")],
-            [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]
-        ]
+        smart_data = await get_smart_trading_analysis(chain, ca)
+        if not smart_data:
+            res = "ℹ️ **No Smart Trading Data**\nTidak dapat menganalisis data trading untuk token ini."
+            keyboard = [
+                [InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_0")],
+                [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]
+            ]
+            await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            return
+
+        # Pagination for Smart Trading (3 items per page)
+        items_per_page = 3
+        total_pages = (len(smart_data) + items_per_page - 1) // items_per_page
+        if page >= total_pages: page = 0
+        
+        start_idx = page * items_per_page
+        end_idx = start_idx + items_per_page
+        current_items = smart_data[start_idx:end_idx]
+        
+        res = f"🧠 **Smart Trading Analysis** (Page {page + 1}/{total_pages})\n\n"
+        for s in current_items:
+            pnl_str = f"🟢 +{s['pnl']:.1f}%" if s['pnl'] > 0 else f"🔴 {s['pnl']:.1f}%"
+            res += (
+                f"👤 **Wallet**:\n`{s['address']}`\n"
+                f"  ├ Type: **{s['type']}**\n"
+                f"  └ Est. PnL: **{pnl_str}**\n\n"
+            )
+        
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"smart_{chain}_{ca}_{page-1}"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"smart_{chain}_{ca}_{page+1}"))
+            
+        keyboard = []
+        if nav_buttons: keyboard.append(nav_buttons)
+        keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_{page}")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")])
+        
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 if __name__ == '__main__':
