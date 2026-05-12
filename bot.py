@@ -80,24 +80,26 @@ async def get_funding_info(chain, address):
 
 async def check_bundling(chain, ca):
     # Heuristic: Check if top holders have the same funding source
-    # This is a simplified version for the bot
     url = f"https://api.gopluslabs.io/api/v1/token_security/{chain}?contract_addresses={ca}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status == 200:
                 data = await response.json()
                 sec = data.get("result", {}).get(ca.lower(), {})
-                holders = sec.get("holders", [])[:10]
-                funders = {}
+                holders = sec.get("holders", [])[:20] # Increased to 20 for better detection
+                funder_to_wallets = {}
                 for h in holders:
                     addr = h.get("address")
                     funder, _ = await get_funding_info(chain, addr)
                     if funder != "Unknown":
-                        funders[funder] = funders.get(funder, 0) + 1
+                        if funder not in funder_to_wallets:
+                            funder_to_wallets[funder] = []
+                        funder_to_wallets[funder].append(addr)
                 
-                bundled = [f for f, count in funders.items() if count > 1]
+                # Filter only those with more than 1 wallet
+                bundled = {f: wallets for f, wallets in funder_to_wallets.items() if len(wallets) > 1}
                 return bundled
-    return []
+    return {}
 
 async def check_whales(chain, ca):
     # Check if top holders hold other significant tokens
@@ -182,8 +184,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🚀 Buy on AveSniper", url=f"https://t.me/AveSniperBot?start={ca}-zenoru18")],
-        [InlineKeyboardButton("🔗 Check Bundling", callback_data=f"bundle_{chain_id}_{ca}"),
-         InlineKeyboardButton("🐋 Whale Tracker", callback_data=f"whale_{chain_id}_{ca}")]
+        [InlineKeyboardButton("🔗 Check Bundling", callback_data=f"bundle_{chain_id}_{ca}_0"),
+         InlineKeyboardButton("🐋 Whale Tracker", callback_data=f"whale_{chain_id}_{ca}_0")]
     ]
     await status_msg.edit_text(response_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown", disable_web_page_preview=True)
 
@@ -191,16 +193,60 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data.split("_")
-    action, chain, ca = data[0], data[1], data[2]
+    action = data[0]
+    
+    # Format: action_chain_ca_page
+    chain = data[1]
+    ca = data[2]
+    page = int(data[3]) if len(data) > 3 else 0
 
-    if action == "bundle":
-        await query.edit_message_text(f"⏳ Mengecek bundling untuk `{ca}`...", parse_mode="Markdown")
-        bundled = await check_bundling(chain, ca)
-        if bundled:
-            res = "⚠️ **Bundling Detected!**\nBeberapa holder didanai oleh sumber yang sama:\n" + "\n".join([f"`{f}`" for f in bundled])
-        else:
+    if action == "bundle" or action == "refresh":
+        loading_text = "⏳ Mengecek bundling..." if action == "bundle" else "🔄 Merefresh data..."
+        await query.edit_message_text(f"{loading_text} untuk `{ca}`...", parse_mode="Markdown")
+        
+        bundled_data = await check_bundling(chain, ca)
+        
+        if not bundled_data:
             res = "✅ **No Bundling Detected**\nTop holders tampaknya memiliki sumber dana yang berbeda."
-        await query.edit_message_text(res, parse_mode="Markdown")
+            keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{chain}_{ca}_0")]]
+            await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            return
+
+        # Flatten the data for pagination: list of (funder, wallets)
+        items = list(bundled_data.items())
+        items_per_page = 1
+        total_pages = len(items)
+        
+        if page >= total_pages: page = 0
+        
+        funder, wallets = items[page]
+        
+        res = (
+            f"⚠️ **Bundling Detected!** (Entitas {page + 1}/{total_pages})\n\n"
+            f"👤 **Funder Entity**:\n`{funder}`\n\n"
+            f"📱 **Wallets Funded** ({len(wallets)}):\n"
+            + "\n".join([f"• `{w}`" for w in wallets])
+        )
+        
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"bundle_{chain}_{ca}_{page-1}"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"bundle_{chain}_{ca}_{page+1}"))
+            
+        keyboard = []
+        if nav_buttons:
+            keyboard.append(nav_buttons)
+        keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{chain}_{ca}_{page}")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")])
+        
+        await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif action == "back":
+        # We need to recreate the original message. 
+        # For simplicity in this bot, we'll just trigger the handle_message logic again or a simplified version.
+        # But since we don't have the original message object easily, let's just show a "Back" message.
+        await query.edit_message_text("Gunakan alamat CA lagi untuk melihat info lengkap.")
 
     elif action == "whale":
         await query.edit_message_text(f"⏳ Melacak whale untuk `{ca}`...", parse_mode="Markdown")
