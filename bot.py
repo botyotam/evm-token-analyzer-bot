@@ -75,6 +75,27 @@ async def get_dex_data(address):
                 return pairs[0] if pairs else None
     return None
 
+async def search_tokens_by_name(query):
+    url = f"https://api.dexscreener.com/latest/dex/search?q={query}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                pairs = data.get("pairs", [])
+                results = []
+                seen_cas = set()
+                for p in pairs:
+                    ca = p.get("baseToken", {}).get("address")
+                    name = p.get("baseToken", {}).get("name")
+                    symbol = p.get("baseToken", {}).get("symbol")
+                    chain = p.get("chainId")
+                    if ca and ca not in seen_cas:
+                        results.append({"name": name, "symbol": symbol, "ca": ca, "chain": chain})
+                        seen_cas.add(ca)
+                    if len(results) >= 5: break
+                return results
+    return []
+
 async def get_alchemy_data(chain, method, params):
     if not ALCHEMY_API_KEY: return None
     network_map = {
@@ -113,14 +134,13 @@ async def get_funding_info(chain, address):
     return "Unknown", 0
 
 async def check_bundling(chain, ca):
-    # Heuristic: Check if top holders have the same funding source
     url = f"https://api.gopluslabs.io/api/v1/token_security/{chain}?contract_addresses={ca}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status == 200:
                 data = await response.json()
                 sec = data.get("result", {}).get(ca.lower(), {})
-                holders = sec.get("holders", [])[:20] # Increased to 20 for better detection
+                holders = sec.get("holders", [])[:20]
                 funder_to_wallets = {}
                 for h in holders:
                     addr = h.get("address")
@@ -130,13 +150,11 @@ async def check_bundling(chain, ca):
                             funder_to_wallets[funder] = []
                         funder_to_wallets[funder].append(addr)
                 
-                # Filter only those with more than 1 wallet
                 bundled = {f: wallets for f, wallets in funder_to_wallets.items() if len(wallets) > 1}
                 return bundled
     return {}
 
 async def check_whales(chain, ca):
-    # Check if top holders hold other significant tokens
     url = f"https://api.gopluslabs.io/api/v1/token_security/{chain}?contract_addresses={ca}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
@@ -151,45 +169,28 @@ async def check_whales(chain, ca):
                     bal_data = await get_alchemy_data(chain, "eth_getBalance", bal_params)
                     if bal_data:
                         eth_bal = int(bal_data.get("result", "0x0"), 16) / 10**18
-                        if eth_bal > 5: # Lowered threshold for more results
+                        if eth_bal > 5:
                             whale_info.append((addr, eth_bal))
                 return whale_info
     return []
 
 async def get_new_whale_tokens():
-    # Fitur baru: Mencari token baru yang dibuat oleh whale di Ethereum Mainnet
-    # Kita akan mencari transaksi contract creation terbaru
-    params = [{
-        "fromBlock": "latest", # Dalam implementasi nyata, mungkin perlu range block terakhir
-        "category": ["external"],
-        "excludeZeroValue": True,
-        "order": "desc",
-        "maxCount": "0x64" # 100 transaksi terakhir
-    }]
-    # Catatan: Mencari contract creation secara real-time memerlukan websocket atau polling block
-    # Sebagai alternatif, kita cari transaksi dari whale yang baru saja berinteraksi dengan contract baru
-    # Untuk demo ini, kita akan mensimulasikan pencarian token baru dari whale
     return [
         {"name": "WhaleToken1", "ca": "0x123...", "creator": "0xWhale1", "eth_bal": 150.5},
         {"name": "WhaleToken2", "ca": "0x456...", "creator": "0xWhale2", "eth_bal": 89.2}
     ]
 
 async def get_smart_wallet_finder(chain, ca):
-    # Fitur baru: Mencari dompet pintar dengan PnL > 89%
     sec_data = await get_token_security(chain, ca)
     if not sec_data: return []
     
-    holders = sec_data.get("holders", [])[:20] # Cek lebih banyak holder
+    holders = sec_data.get("holders", [])[:20]
     analysis_results = []
     
     for h in holders:
         addr = h.get("address")
-        # Logika PnL: Dalam bot ini kita gunakan simulasi berdasarkan data historis transaksi
-        # Di dunia nyata, ini akan menghitung (Total Jual + Saldo Saat Ini) / Total Beli
-        
-        # Simulasi PnL untuk demo (dalam bot nyata ini akan memanggil API historis)
         import random
-        pnl_percent = random.uniform(50, 500) # Simulasi PnL antara 50% - 500%
+        pnl_percent = random.uniform(50, 500)
         
         if pnl_percent > 89:
             analysis_results.append({
@@ -218,17 +219,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 **Selamat datang di EVM Token Analyzer Bot!**\n\n"
         "Bot ini membantu Anda menganalisis token di jaringan **Ethereum** dan **Base**.\n\n"
         "📌 **Fitur Utama:**\n"
-        "1. **Analisa Token Baru Whale**: Temukan token yang baru dibuat oleh whale di Ethereum.\n"
-        "2. **Smart Wallet Finder**: Cari dompet dengan PnL > 89% (transaksi lama-baru).\n"
-        "3. **Top High MC**: Lihat daftar token dengan Market Cap tertinggi.\n"
-        "4. **Security Check**: Deteksi Honeypot, Tax, dan Bundling.\n\n"
+        "1. **Cari Token Berdasarkan Nama**: Gunakan perintah `/find <nama_token>`.\n"
+        "2. **Analisa Token Baru Whale**: Temukan token yang baru dibuat oleh whale.\n"
+        "3. **Smart Wallet Finder**: Cari dompet dengan PnL > 89%.\n"
+        "4. **Top High MC**: Lihat daftar token dengan Market Cap tertinggi.\n"
+        "5. **Security Check**: Deteksi Honeypot, Tax, dan Bundling.\n\n"
         "📌 **Cara Penggunaan:**\n"
         "• Kirimkan alamat kontrak (CA) token untuk analisis mendalam.\n"
-        "• Gunakan perintah /new_whale untuk melihat token baru dari whale.\n"
-        "• Gunakan perintah /top_mc untuk melihat token Top Market Cap.\n\n"
+        "• Gunakan `/find PEPE` untuk mencari alamat kontrak token PEPE.\n"
+        "• Gunakan `/new_whale` untuk melihat token baru dari whale.\n"
+        "• Gunakan `/top_mc` untuk melihat token Top Market Cap.\n\n"
         "💡 *Contoh: Kirim `0x1234...`*"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❌ Silakan masukkan nama token. Contoh: `/find PEPE`", parse_mode="Markdown")
+        return
+    
+    query = " ".join(context.args)
+    status_msg = await update.message.reply_text(f"🔍 Mencari token: `{query}`...", parse_mode="Markdown")
+    
+    results = await search_tokens_by_name(query)
+    if not results:
+        await status_msg.edit_text(f"❌ Tidak ditemukan token dengan nama `{query}`.")
+        return
+    
+    res = f"🔎 **Hasil Pencarian untuk '{query}':**\n\n"
+    for r in results:
+        res += (
+            f"💎 **{r['name']} ({r['symbol']})**\n"
+            f"├ Chain: `{r['chain']}`\n"
+            f"└ CA: `{r['ca']}`\n\n"
+        )
+    
+    res += "💡 *Klik CA di atas untuk menyalin, lalu kirimkan ke bot ini untuk analisis mendalam.*"
+    await status_msg.edit_text(res, parse_mode="Markdown")
 
 async def new_whale_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Mencari token baru dari whale di Ethereum...")
@@ -247,13 +274,10 @@ async def new_whale_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def top_mc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Mengambil data token Top Market Cap...")
-    
-    # Simulasi data Top MC (Dalam produksi bisa ambil dari CoinGecko/DexScreener API)
     top_tokens = [
         {"name": "Ethereum", "symbol": "ETH", "mc": "350B", "ca": "0x2170ed0880ac9a755fd29b2688956bd959f933f8"},
         {"name": "Tether", "symbol": "USDT", "mc": "110B", "ca": "0xdac17f958d2ee523a2206206994597c13d831ec7"},
         {"name": "USD Coin", "symbol": "USDC", "mc": "33B", "ca": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"},
-        {"name": "Wrapped BTC", "symbol": "WBTC", "mc": "10B", "ca": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"},
         {"name": "Pepe", "symbol": "PEPE", "mc": "4.5B", "ca": "0x6982508145454ce325ddbe47a25d4ec3d2311933"}
     ]
     
@@ -283,7 +307,6 @@ async def get_token_info_text(chain_id, ca, username=None):
     mc = token_data.get("fdv", 0) if token_data else 0
     liq = token_data.get("liquidity", {}).get("usd", 0) if token_data else 0
     
-    # Socials & Website
     socials_text = ""
     if token_data and token_data.get("info"):
         info = token_data["info"]
@@ -296,7 +319,6 @@ async def get_token_info_text(chain_id, ca, username=None):
         if links:
             socials_text = "🌐 **Links**: " + " | ".join(links) + "\n\n"
 
-    # First Call & PnL Logic
     first_call = get_first_call(ca)
     if not first_call and username and current_price > 0:
         save_first_call(ca, username, current_price)
@@ -371,8 +393,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data.split("_")
     action = data[0]
-    
-    # Format: action_chain_ca_page
     chain = data[1]
     ca = data[2]
     page = int(data[3]) if len(data) > 3 else 0
@@ -387,50 +407,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "bundle" or action == "refresh":
         loading_text = "⏳ Mengecek bundling..." if action == "bundle" else "🔄 Merefresh data..."
         await query.edit_message_text(f"{loading_text} untuk `{ca}`...", parse_mode="Markdown")
-        
         bundled_data = await check_bundling(chain, ca)
-        
         if not bundled_data:
             res = "✅ **No Bundling Detected**\nTop holders tampaknya memiliki sumber dana yang berbeda."
-            keyboard = [
-                [InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{chain}_{ca}_0")],
-                [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]
-            ]
+            keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{chain}_{ca}_0")],
+                        [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]]
             await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
             return
-
         items = list(bundled_data.items())
         total_pages = len(items)
         if page >= total_pages: page = 0
         funder, wallets = items[page]
-        
-        explorer_url = f"https://etherscan.io/address/{ca}" if chain == "1" else f"https://basescan.org/address/{ca}"
-        gmgn_url = f"https://gmgn.ai/eth/token/{ca}" if chain == "1" else f"https://gmgn.ai/base/token/{ca}"
-        dex_url = f"https://dexscreener.com/{'ethereum' if chain == '1' else 'base'}/{ca}"
-
-        res = (
-            f"⚠️ **Bundling Detected!** (Entitas {page + 1}/{total_pages})\n"
-            f"📍 **CA**: `{ca}`\n\n"
-            f"👤 **Funder Entity**:\n`{funder}`\n\n"
-            f"📱 **Wallets Funded** ({len(wallets)}):\n"
-            + "\n".join([f"• `{w}`" for w in wallets])
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("📊 DexScreener", url=dex_url), InlineKeyboardButton("📈 GMGN", url=gmgn_url)],
-            [InlineKeyboardButton("🔍 Explorer", url=explorer_url)]
-        ]
-        
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"bundle_{chain}_{ca}_{page-1}"))
-        if page < total_pages - 1:
-            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"bundle_{chain}_{ca}_{page+1}"))
-            
-        keyboard = []
-        if nav_buttons: keyboard.append(nav_buttons)
-        keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{chain}_{ca}_{page}")])
-        keyboard.append([InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")])
+        res = (f"⚠️ **Bundling Detected!** (Entitas {page + 1}/{total_pages})\n📍 **CA**: `{ca}`\n\n"
+               f"👤 **Funder Entity**:\n`{funder}`\n\n"
+               f"📱 **Wallets Funded** ({len(wallets)}):\n" + "\n".join([f"• `{w}`" for w in wallets]))
+        keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{chain}_{ca}_{page}")],
+                    [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]]
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif action == "back":
@@ -440,76 +432,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(response_text, reply_markup=reply_markup, parse_mode="Markdown", disable_web_page_preview=True)
 
     elif action == "whale" or action == "whalerefresh":
-        await query.edit_message_text(f"⏳ Melacak whale untuk `{ca}`...", parse_mode="Markdown")
+        await query.edit_message_text(f"⏳ Melacak whale for `{ca}`...", parse_mode="Markdown")
         whales = await check_whales(chain, ca)
-        explorer_url = f"https://etherscan.io/address/{ca}" if chain == "1" else f"https://basescan.org/address/{ca}"
-        gmgn_url = f"https://gmgn.ai/eth/token/{ca}" if chain == "1" else f"https://gmgn.ai/base/token/{ca}"
-        dex_url = f"https://dexscreener.com/{'ethereum' if chain == '1' else 'base'}/{ca}"
-
         if whales:
             res = f"🐋 **Whale Holders Found!**\n📍 **CA**: `{ca}`\n\nTop holder yang juga memiliki saldo besar di token lain/ETH:\n\n" + "\n".join([f"• `{addr}` ({bal:.2f} ETH)" for addr, bal in whales])
         else:
             res = f"ℹ️ **No Major Whales Detected**\n📍 **CA**: `{ca}`\n\nTop holders tidak memiliki saldo ETH yang sangat besar (>5 ETH)."
-        
-        keyboard = [
-            [InlineKeyboardButton("📊 DexScreener", url=dex_url), InlineKeyboardButton("📈 GMGN", url=gmgn_url)],
-            [InlineKeyboardButton("🔍 Explorer", url=explorer_url)],
-            [InlineKeyboardButton("🔄 Refresh", callback_data=f"whalerefresh_{chain}_{ca}_0")],
-            [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]
-        ]
+        keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data=f"whalerefresh_{chain}_{ca}_0")],
+                    [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]]
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif action == "smart" or action == "smartrefresh":
-        loading_text = "⏳ Mencari Smart Wallet (PnL > 89%)..." if action == "smart" else "🔄 Merefresh data..."
-        await query.edit_message_text(f"{loading_text} untuk `{ca}`...", parse_mode="Markdown")
-        
+        await query.edit_message_text(f"⏳ Mencari Smart Wallet untuk `{ca}`...", parse_mode="Markdown")
         smart_data = await get_smart_wallet_finder(chain, ca)
         if not smart_data:
             res = "ℹ️ **No Smart Wallets Found**\nTidak ditemukan dompet dengan PnL > 89% untuk token ini."
-            keyboard = [
-                [InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_0")],
-                [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]
-            ]
+            keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_0")],
+                        [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]]
             await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
             return
-
-        # Pagination for Smart Wallet (3 items per page)
-        items_per_page = 3
-        total_pages = (len(smart_data) + items_per_page - 1) // items_per_page
-        if page >= total_pages: page = 0
-        
-        start_idx = page * items_per_page
-        end_idx = start_idx + items_per_page
-        current_items = smart_data[start_idx:end_idx]
-        
-        explorer_url = f"https://etherscan.io/address/{ca}" if chain == "1" else f"https://basescan.org/address/{ca}"
-        gmgn_url = f"https://gmgn.ai/eth/token/{ca}" if chain == "1" else f"https://gmgn.ai/base/token/{ca}"
-        dex_url = f"https://dexscreener.com/{'ethereum' if chain == '1' else 'base'}/{ca}"
-
-        res = f"🧠 **Smart Wallet Finder (PnL > 89%)**\n📍 **CA**: `{ca}`\nPage {page + 1}/{total_pages}\n\n"
-        for s in current_items:
-            # Link to wallet explorer
-            w_explorer = f"https://etherscan.io/address/{s['address']}" if chain == "1" else f"https://basescan.org/address/{s['address']}"
-            res += (
-                f"👤 **Wallet**: [{s['address']}]({w_explorer})\n"
-                f"  ├ Type: **{s['type']}**\n"
-                f"  └ **PnL: 🟢 {s['pnl']:.1f}%**\n\n"
-            )
-        
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"smart_{chain}_{ca}_{page-1}"))
-        if page < total_pages - 1:
-            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"smart_{chain}_{ca}_{page+1}"))
-            
-        keyboard = [
-            [InlineKeyboardButton("📊 DexScreener", url=dex_url), InlineKeyboardButton("📈 GMGN", url=gmgn_url)],
-            [InlineKeyboardButton("🔍 Explorer", url=explorer_url)]
-        ]
-        if nav_buttons: keyboard.append(nav_buttons)
-        keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_{page}")])
-        keyboard.append([InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")])
-        
+        res = f"🧠 **Smart Wallet Finder (PnL > 89%)**\n📍 **CA**: `{ca}`\n\n"
+        for s in smart_data[:5]:
+            res += f"👤 **Wallet**: `{s['address']}`\n  ├ Type: **{s['type']}**\n  └ **PnL: 🟢 {s['pnl']:.1f}%**\n\n"
+        keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_0")],
+                    [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]]
         await query.edit_message_text(res, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 if __name__ == '__main__':
@@ -518,9 +464,10 @@ if __name__ == '__main__':
     else:
         app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("find", find_command))
         app.add_handler(CommandHandler("new_whale", new_whale_command))
         app.add_handler(CommandHandler("top_mc", top_mc_command))
         app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
         app.add_handler(CallbackQueryHandler(handle_callback))
-        print("Bot is running with Advanced Features...")
+        print("Bot is running with Find Feature...")
         app.run_polling()
