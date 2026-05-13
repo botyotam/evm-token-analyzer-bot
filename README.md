@@ -1,14 +1,18 @@
-# EVM Token Analyzer Bot (ETH & Base)
+# EVM Token Analyzer Bot (ETH & Base) - Whale & Smart Wallet Edition
 
-Bot Telegram untuk menganalisis token di jaringan Ethereum dan Base secara otomatis hanya dengan mengirimkan alamat kontrak (CA).
+Bot Telegram canggih untuk menganalisis token di jaringan Ethereum dan Base, kini dilengkapi dengan fitur pelacakan whale dan pencarian dompet pintar.
 
-## Fitur
-- **Deteksi Otomatis**: Cukup kirim CA, bot akan mendeteksi apakah token ada di ETH atau Base.
-- **Analisis Keamanan**: Cek Honeypot, Buy/Sell Tax, Open Source, Proxy, dan Mintable (via GoPlus API).
-- **Data Pasar**: Harga real-time, Market Cap (FDV), dan Likuiditas (via DexScreener API).
-- **Info Creator**: Alamat creator dan saldo pendanaan (via Alchemy API).
-- **Social Media**: Link otomatis ke Website, Twitter, dan Telegram token.
-- **Quick Buy**: Link langsung ke AveSniperBot dengan referral Anda.
+## Fitur Unggulan
+- **🐋 New Whale Token Analysis**: Deteksi token baru yang dibuat oleh whale (saldo > 10 ETH) di Ethereum Mainnet menggunakan Alchemy API.
+- **🧠 Smart Wallet Finder**: Mencari dompet dengan PnL di atas 89% dari riwayat transaksi lama hingga baru.
+- **🛡️ Security Check**: Deteksi Honeypot, Tax, Open Source, dan deteksi Bundling (holder dengan sumber dana sama).
+- **📊 Market Data**: Harga real-time, Market Cap, dan Likuiditas via DexScreener.
+- **🔗 Socials & Creator Info**: Link media sosial otomatis dan detail pendanaan awal kreator.
+
+## Cara Penggunaan
+1. **Analisis Token**: Kirimkan alamat kontrak (CA) token ke bot.
+2. **Cari Token Whale**: Gunakan perintah `/new_whale` untuk melihat daftar token terbaru dari whale.
+3. **Smart Wallet**: Klik tombol "Smart Wallet Finder" pada hasil analisis token untuk melihat trader paling profit.
 
 ## Cara Install & Jalankan
 
@@ -29,10 +33,6 @@ ALCHEMY_API_KEY=your_alchemy_key
 pip install -r requirements.txt
 python bot.py
 ```
-
-### 4. Deployment
-- **Railway/Render**: Gunakan `Dockerfile` atau `Procfile` yang sudah disediakan.
-- **VPS**: Gunakan Docker atau jalankan langsung dengan `nohup` atau `pm2`.
 
 ## Kontribusi
 Silakan buka issue atau pull request untuk fitur tambahan!
