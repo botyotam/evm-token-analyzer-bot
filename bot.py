@@ -220,10 +220,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 **Fitur Utama:**\n"
         "1. **Analisa Token Baru Whale**: Temukan token yang baru dibuat oleh whale di Ethereum.\n"
         "2. **Smart Wallet Finder**: Cari dompet dengan PnL > 89% (transaksi lama-baru).\n"
-        "3. **Security Check**: Deteksi Honeypot, Tax, dan Bundling.\n\n"
+        "3. **Top High MC**: Lihat daftar token dengan Market Cap tertinggi.\n"
+        "4. **Security Check**: Deteksi Honeypot, Tax, dan Bundling.\n\n"
         "📌 **Cara Penggunaan:**\n"
         "• Kirimkan alamat kontrak (CA) token untuk analisis mendalam.\n"
-        "• Gunakan perintah /new_whale untuk melihat token baru dari whale.\n\n"
+        "• Gunakan perintah /new_whale untuk melihat token baru dari whale.\n"
+        "• Gunakan perintah /top_mc untuk melihat token Top Market Cap.\n\n"
         "💡 *Contoh: Kirim `0x1234...`*"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
@@ -239,6 +241,28 @@ async def new_whale_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"├ CA: `{t['ca']}`\n"
             f"├ Creator: `{t['creator']}`\n"
             f"└ Creator Balance: **{t['eth_bal']} ETH**\n\n"
+        )
+    
+    await status_msg.edit_text(res, parse_mode="Markdown")
+
+async def top_mc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text("🔍 Mengambil data token Top Market Cap...")
+    
+    # Simulasi data Top MC (Dalam produksi bisa ambil dari CoinGecko/DexScreener API)
+    top_tokens = [
+        {"name": "Ethereum", "symbol": "ETH", "mc": "350B", "ca": "0x2170ed0880ac9a755fd29b2688956bd959f933f8"},
+        {"name": "Tether", "symbol": "USDT", "mc": "110B", "ca": "0xdac17f958d2ee523a2206206994597c13d831ec7"},
+        {"name": "USD Coin", "symbol": "USDC", "mc": "33B", "ca": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"},
+        {"name": "Wrapped BTC", "symbol": "WBTC", "mc": "10B", "ca": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"},
+        {"name": "Pepe", "symbol": "PEPE", "mc": "4.5B", "ca": "0x6982508145454ce325ddbe47a25d4ec3d2311933"}
+    ]
+    
+    res = "🔝 **Top High Market Cap Tokens (Ethereum)**\n\n"
+    for t in top_tokens:
+        res += (
+            f"💎 **{t['name']} ({t['symbol']})**\n"
+            f"├ MC: `${t['mc']}`\n"
+            f"└ CA: `{t['ca']}`\n\n"
         )
     
     await status_msg.edit_text(res, parse_mode="Markdown")
@@ -291,9 +315,13 @@ async def get_token_info_text(chain_id, ca, username=None):
                 f"└ Performance: {pnl_emoji} **{pnl_percent:.1f}% ({multiplier:.2f}x)**\n\n"
             )
 
+    explorer_url = f"https://etherscan.io/address/{ca}" if chain_id == "1" else f"https://basescan.org/address/{ca}"
+    gmgn_url = f"https://gmgn.ai/eth/token/{ca}" if chain_id == "1" else f"https://gmgn.ai/base/token/{ca}"
+    dex_url = f"https://dexscreener.com/{'ethereum' if chain_id == '1' else 'base'}/{ca}"
+
     response_text = (
         f"💎 **{name} ({symbol})** | {chain_name}\n"
-        f"`{ca}`\n\n"
+        f"📍 **CA**: `{ca}`\n\n"
         f"💰 **Market Info**\n"
         f"• Price: `${current_price:.8f}`\n"
         f"• Market Cap: `${mc:,.0f}`\n"
@@ -310,6 +338,8 @@ async def get_token_info_text(chain_id, ca, username=None):
     
     keyboard = [
         [InlineKeyboardButton("🚀 Buy on AveSniper", url=f"https://t.me/AveSniperBot?start={ca}-zenoru18")],
+        [InlineKeyboardButton("📊 DexScreener", url=dex_url), InlineKeyboardButton("📈 GMGN", url=gmgn_url)],
+        [InlineKeyboardButton("🔍 Explorer", url=explorer_url)],
         [InlineKeyboardButton("🔗 Bundling", callback_data=f"bundle_{chain_id}_{ca}_0"),
          InlineKeyboardButton("🐋 Whale", callback_data=f"whale_{chain_id}_{ca}_0")],
         [InlineKeyboardButton("🧠 Smart Wallet Finder", callback_data=f"smart_{chain_id}_{ca}_0")],
@@ -374,12 +404,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if page >= total_pages: page = 0
         funder, wallets = items[page]
         
+        explorer_url = f"https://etherscan.io/address/{ca}" if chain == "1" else f"https://basescan.org/address/{ca}"
+        gmgn_url = f"https://gmgn.ai/eth/token/{ca}" if chain == "1" else f"https://gmgn.ai/base/token/{ca}"
+        dex_url = f"https://dexscreener.com/{'ethereum' if chain == '1' else 'base'}/{ca}"
+
         res = (
-            f"⚠️ **Bundling Detected!** (Entitas {page + 1}/{total_pages})\n\n"
+            f"⚠️ **Bundling Detected!** (Entitas {page + 1}/{total_pages})\n"
+            f"📍 **CA**: `{ca}`\n\n"
             f"👤 **Funder Entity**:\n`{funder}`\n\n"
             f"📱 **Wallets Funded** ({len(wallets)}):\n"
             + "\n".join([f"• `{w}`" for w in wallets])
         )
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 DexScreener", url=dex_url), InlineKeyboardButton("📈 GMGN", url=gmgn_url)],
+            [InlineKeyboardButton("🔍 Explorer", url=explorer_url)]
+        ]
         
         nav_buttons = []
         if page > 0:
@@ -402,12 +442,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "whale" or action == "whalerefresh":
         await query.edit_message_text(f"⏳ Melacak whale untuk `{ca}`...", parse_mode="Markdown")
         whales = await check_whales(chain, ca)
+        explorer_url = f"https://etherscan.io/address/{ca}" if chain == "1" else f"https://basescan.org/address/{ca}"
+        gmgn_url = f"https://gmgn.ai/eth/token/{ca}" if chain == "1" else f"https://gmgn.ai/base/token/{ca}"
+        dex_url = f"https://dexscreener.com/{'ethereum' if chain == '1' else 'base'}/{ca}"
+
         if whales:
-            res = "🐋 **Whale Holders Found!**\nTop holder yang juga memiliki saldo besar di token lain/ETH:\n\n" + "\n".join([f"• `{addr}` ({bal:.2f} ETH)" for addr, bal in whales])
+            res = f"🐋 **Whale Holders Found!**\n📍 **CA**: `{ca}`\n\nTop holder yang juga memiliki saldo besar di token lain/ETH:\n\n" + "\n".join([f"• `{addr}` ({bal:.2f} ETH)" for addr, bal in whales])
         else:
-            res = "ℹ️ **No Major Whales Detected**\nTop holders tidak memiliki saldo ETH yang sangat besar (>5 ETH)."
+            res = f"ℹ️ **No Major Whales Detected**\n📍 **CA**: `{ca}`\n\nTop holders tidak memiliki saldo ETH yang sangat besar (>5 ETH)."
         
         keyboard = [
+            [InlineKeyboardButton("📊 DexScreener", url=dex_url), InlineKeyboardButton("📈 GMGN", url=gmgn_url)],
+            [InlineKeyboardButton("🔍 Explorer", url=explorer_url)],
             [InlineKeyboardButton("🔄 Refresh", callback_data=f"whalerefresh_{chain}_{ca}_0")],
             [InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")]
         ]
@@ -436,10 +482,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         end_idx = start_idx + items_per_page
         current_items = smart_data[start_idx:end_idx]
         
-        res = f"🧠 **Smart Wallet Finder (PnL > 89%)**\nPage {page + 1}/{total_pages}\n\n"
+        explorer_url = f"https://etherscan.io/address/{ca}" if chain == "1" else f"https://basescan.org/address/{ca}"
+        gmgn_url = f"https://gmgn.ai/eth/token/{ca}" if chain == "1" else f"https://gmgn.ai/base/token/{ca}"
+        dex_url = f"https://dexscreener.com/{'ethereum' if chain == '1' else 'base'}/{ca}"
+
+        res = f"🧠 **Smart Wallet Finder (PnL > 89%)**\n📍 **CA**: `{ca}`\nPage {page + 1}/{total_pages}\n\n"
         for s in current_items:
+            # Link to wallet explorer
+            w_explorer = f"https://etherscan.io/address/{s['address']}" if chain == "1" else f"https://basescan.org/address/{s['address']}"
             res += (
-                f"👤 **Wallet**:\n`{s['address']}`\n"
+                f"👤 **Wallet**: [{s['address']}]({w_explorer})\n"
                 f"  ├ Type: **{s['type']}**\n"
                 f"  └ **PnL: 🟢 {s['pnl']:.1f}%**\n\n"
             )
@@ -450,7 +502,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if page < total_pages - 1:
             nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"smart_{chain}_{ca}_{page+1}"))
             
-        keyboard = []
+        keyboard = [
+            [InlineKeyboardButton("📊 DexScreener", url=dex_url), InlineKeyboardButton("📈 GMGN", url=gmgn_url)],
+            [InlineKeyboardButton("🔍 Explorer", url=explorer_url)]
+        ]
         if nav_buttons: keyboard.append(nav_buttons)
         keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"smartrefresh_{chain}_{ca}_{page}")])
         keyboard.append([InlineKeyboardButton("🔙 Back to Info", callback_data=f"back_{chain}_{ca}")])
@@ -464,6 +519,7 @@ if __name__ == '__main__':
         app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("new_whale", new_whale_command))
+        app.add_handler(CommandHandler("top_mc", top_mc_command))
         app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
         app.add_handler(CallbackQueryHandler(handle_callback))
         print("Bot is running with Advanced Features...")
